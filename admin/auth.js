@@ -17,9 +17,19 @@
       cache: { cacheLocation: "sessionStorage" },
     });
     await msalApp.initialize();
-    var result = await msalApp.handleRedirectPromise();
-    if (result && result.account) msalApp.setActiveAccount(result.account);
-    else {
+    // Distinguish a fresh interactive sign-in (redirect just completed) from a
+    // cached-session page load, and surface redirect errors (e.g. a declined
+    // consent) instead of letting them break boot — both feed the sign-in log.
+    try {
+      var result = await msalApp.handleRedirectPromise();
+      if (result && result.account) {
+        msalApp.setActiveAccount(result.account);
+        window.AdminAuth.freshLogin = true;
+      }
+    } catch (e) {
+      window.AdminAuth.lastError = (e && (e.errorCode || "auth_error")) + ": " + ((e && e.errorMessage) || e && e.message || "").slice(0, 200);
+    }
+    if (!msalApp.getActiveAccount()) {
       var accounts = msalApp.getAllAccounts();
       if (accounts.length) msalApp.setActiveAccount(accounts[0]);
     }

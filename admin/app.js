@@ -42,6 +42,32 @@
       "Propose a remediation.";
   }
 
+  // Server-side sign-in log (proxy KV, 60-day retention). Success events carry
+  // the user's token so the proxy records a verified identity; failure reports
+  // are unauthenticated by nature and logged as "reported". Fire-and-forget —
+  // logging must never block or break login itself.
+  function reportLoginEvent(acct) {
+    if (!(CFG.proxy && CFG.proxy.baseUrl)) return;
+    var base = CFG.proxy.baseUrl.replace(/\/+$/, "");
+    try {
+      if (acct && window.AdminAuth.freshLogin) {
+        window.AdminAuth.getApiToken().then(function (t) {
+          return fetch(base + "/login-event", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: "Bearer " + t },
+            body: JSON.stringify({ event: "login_success" }),
+          });
+        }).catch(function () {});
+      } else if (window.AdminAuth.lastError) {
+        fetch(base + "/login-event", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ event: "login_failure", detail: window.AdminAuth.lastError }),
+        }).catch(function () {});
+      }
+    } catch (e) {}
+  }
+
   // Internal audit trail (localStorage) for security review.
   function audit(user, action, slug, detail) {
     try {
@@ -81,7 +107,7 @@
   }
   function Modal(props) {
     return html`<div class="scrim" onClick=${function (e) { if (e.target === e.currentTarget && props.onClose) props.onClose(); }}>
-      <div class="modal" role="dialog" aria-modal="true">${props.children}</div>
+      <div class="modal ${props.wide ? "wide" : ""}" role="dialog" aria-modal="true">${props.children}</div>
     </div>`;
   }
   function fmtSize(bytes) {
@@ -118,12 +144,10 @@
     return html`<div class="login-wrap"><div class="card login-card">
       <p class="brand">e<span>SUB</span> Shared</p>
       <p class="tag">Publishing Admin</p>
-      <p>Sign in with your esub.com credentials. Access is restricted.</p>
       <button class="btn btn-primary ms-btn" onClick=${props.onLogin} disabled=${!props.configured}>
         ${icon("badge")} Sign in
       </button>
       ${!props.configured && html`<p class="hint" style=${{ marginTop: "12px" }}>Microsoft sign-in isn't configured in <code>config.js</code> yet.</p>`}
-      <p class="hint" style=${{ marginTop: "12px" }}>Need access? <${HelpDesk} suffix=" to request it." /></p>
     </div></div>`;
   }
 
@@ -458,6 +482,7 @@
         <span class="brand">e<span>SUB</span> Shared</span>
         <span class="tag">Publishing Admin</span>
         <span class="spacer"></span>
+        ${CFG.proxy && CFG.proxy.baseUrl && html`<button class="iconbtn themebtn" data-tip="Sign-in activity" onClick=${function () { setModal({ kind: "activity" }); }}>${icon("monitoring")}</button>`}
         <${ThemeToggle} />
         <span class="user"><span class="avatar">${(user.firstName || "?").slice(0, 1).toUpperCase()}</span>${user.name}</span>
         <button class="signout" onClick=${props.onSignOut}>Sign out</button>
@@ -542,6 +567,7 @@
       ${modal && modal.kind === "code" && html`<${CodeModal} page=${modal.page} copy=${copy} onClose=${function () { setModal(null); }} />`}
       ${modal && modal.kind === "notes" && html`<${NotesModal} page=${modal.page} onClose=${function () { setModal(null); }} onSave=${doSaveNotes} />`}
       ${modal && modal.kind === "fail" && html`<${FailModal} pending=${modal.pending} copy=${copy} onClose=${function () { setModal(null); }} />`}
+      ${modal && modal.kind === "activity" && html`<${ActivityModal} onClose=${function () { setModal(null); }} />`}
       <${Toasts} items=${toasts} onDismiss=${dismissToast} />
     </div>`;
   }
@@ -660,6 +686,55 @@
     <//>`;
   }
 
+  // Sign-in activity monitor: the proxy's KV event log (60-day retention).
+  // Entra ID's sign-in logs stay the authoritative record; this is the
+  // self-serve view of what reached OUR proxy.
+  function ActivityModal(props) {
+    var s1 = useState(null); var rows = s1[0], setRows = s1[1];
+    var s2 = useState(null); var err = s2[0], setErr = s2[1];
+    useEffect(function () {
+      (async function () {
+        try {
+          var t = await window.AdminAuth.getApiToken();
+          var res = await fetch(CFG.proxy.baseUrl.replace(/\/+$/, "") + "/logins?days=60", {
+            headers: { Authorization: "Bearer " + t },
+          });
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          setRows(await res.json());
+        } catch (e) { setErr(e.message); }
+      })();
+    }, []);
+    var labels = {
+      login_success: { text: "Sign-in", cls: "published", ic: "check_circle" },
+      login_failure: { text: "Failed sign-in", cls: "failed", ic: "error_outline" },
+      unauthorized_api: { text: "Unauthorized call", cls: "failed", ic: "gpp_bad" },
+    };
+    return html`<${Modal} wide=${true} onClose=${props.onClose}>
+      <div class="modal-head">
+        <h2>Sign-in activity — last 60 days</h2>
+        <span style=${{ flex: 1 }}></span>
+        <button class="iconbtn" data-tip="Close" onClick=${props.onClose}>${icon("close")}</button>
+      </div>
+      ${err ? html`<p class="errline">Could not load the activity log: ${err}</p>`
+      : rows == null ? html`<div class="empty">Loading…</div>`
+      : rows.length === 0 ? html`<div class="empty">No events recorded yet.</div>`
+      : html`<div class="tablewrap" style=${{ maxHeight: "50vh", overflowY: "auto" }}><table>
+          <thead><tr><th>Time</th><th>Event</th><th>User</th><th>From</th><th>Detail</th></tr></thead>
+          <tbody>${rows.map(function (r, i) {
+            var l = labels[r.type] || { text: r.type, cls: "pending", ic: "help_outline" };
+            return html`<tr key=${i}>
+              <td style=${{ whiteSpace: "nowrap" }}>${fmtDate(r.ts)}</td>
+              <td><span class="chip ${l.cls}">${icon(l.ic)}${l.text}</span></td>
+              <td>${r.user || "—"}</td>
+              <td style=${{ whiteSpace: "nowrap" }}>${r.ip || "—"}${r.country ? " (" + r.country + ")" : ""}</td>
+              <td class="notes" title=${r.ua ? "UA: " + r.ua : undefined}>${r.detail || "—"}</td>
+            </tr>`;
+          })}</tbody>
+        </table></div>`}
+      <p class="hint" style=${{ marginTop: "10px" }}>Events are kept for 60 days. Verified sign-ins are logged with the signed-in identity; failures are self-reported by the browser. The authoritative sign-in record is Entra ID's sign-in log for “eSUB Shared Publishing Admin”.</p>
+    <//>`;
+  }
+
   function FailModal(props) {
     var p = props.pending;
     var prompt = claudePrompt(p);
@@ -686,6 +761,7 @@
       (async function () {
         if (window.AdminAuth.isConfigured) {
           var acct = await window.AdminAuth.init();
+          reportLoginEvent(acct);
           if (acct) {
             setUser(acct);
             // Proxy mode: the Entra login is the only gate — no GitHub token to collect.
