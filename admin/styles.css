@@ -110,10 +110,13 @@ td.notes-edit { cursor: pointer; }
 td.notes-edit:hover { color: var(--heading); }
 .noteicon { font-size: 13px; margin-left: 5px; opacity: 0; vertical-align: -2px; color: var(--muted); }
 td.notes-edit:hover .noteicon { opacity: 1; }
-.urlcell { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
-.urlcell a { font-weight: 400; font-size: 12.5px; }
-.codecell { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
-.codeval { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 12px; background: rgba(128,128,128,.08); border-radius: 4px; padding: 3px 8px; min-width: 110px; letter-spacing: .04em; }
+/* The Page column gets first claim on width: slugs/titles should read on one
+   or two lines, not wrap word-by-word. URL text is small (copy does the real
+   work) and the code cell is icons-only, so they give the space back. */
+td.pgcell { min-width: 230px; overflow-wrap: anywhere; }
+.urlcell { display: flex; align-items: center; gap: 2px; white-space: nowrap; }
+.urlcell a { font-weight: 400; font-size: 11px; }
+.codecell { display: flex; align-items: center; gap: 2px; white-space: nowrap; }
 .iconbtn { background: none; border: 0; border-radius: 4px; padding: 4px; cursor: pointer; color: var(--muted); display: inline-flex; position: relative; }
 .iconbtn:hover { background: rgba(128,128,128,.12); color: var(--heading); }
 .iconbtn:disabled { opacity: .35; cursor: default; }

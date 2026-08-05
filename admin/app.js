@@ -183,11 +183,12 @@
   }
 
   // ---------- row ----------
+  // No masked placeholder: the eye opens the reveal dialog, so dots only cost
+  // horizontal space the Page column needs more.
   function CodeCell(props) {
     var code = props.code;
     if (!code) return html`<span class="pgtitle">pending</span>`;
     return html`<div class="codecell">
-      <span class="codeval">•••••••••••••</span>
       <button class="iconbtn" data-tip="Reveal code" onClick=${props.onReveal}>${icon("visibility")}</button>
       <button class="iconbtn" data-tip="Copy code" onClick=${function () { props.copy(code, "Code copied"); }}>${icon("content_copy")}</button>
     </div>`;
@@ -233,7 +234,7 @@
     return html`<tr>
       <td class="favcell"><button class="iconbtn fav ${props.fav ? "on" : ""}" data-tip=${props.fav ? "Unfavorite" : "Favorite — pins to the top"}
         onClick=${function () { props.onFav(pg); }}>${icon(props.fav ? "star" : "star_border")}</button></td>
-      <td><div class="pgname">${pg.slug}</div>${pg.title && html`<div class="pgtitle">${pg.title}</div>`}
+      <td class="pgcell"><div class="pgname">${pg.slug}</div>${pg.title && html`<div class="pgtitle">${pg.title}</div>`}
         ${sharedToMe && html`<div class="pgowner"><span class="sharedchip">SHARED</span> ${meta.ownerName || meta.owner}</div>`}
         ${foreign && html`<div class="pgowner">${meta.ownerName || meta.owner}${(meta.sharedWith || []).length ? " · shared with " + meta.sharedWith.length : ""}</div>`}
       </td>
@@ -599,7 +600,7 @@
                 : "No pages yet. Upload the first one."}
             </div>`
           : html`<div class="tablewrap"><table>
-            <thead><tr><th class="favcell"></th>${sortHeader("Page", "name")}${filterHeader("Status", "status", statusOptions, statusFilter, setStatusFilter, statusCounts)}<th>Notes</th><th>Public URL</th><th>Access Code</th><th>Size</th>${sortHeader("Last Published", "pub")}${filterHeader("By", "by", byOptions, byFilter, setByFilter, byCounts)}<th style=${{ textAlign: "right" }}>Actions</th></tr></thead>
+            <thead><tr><th class="favcell"></th>${sortHeader("Page", "name")}${filterHeader("Status", "status", statusOptions, statusFilter, setStatusFilter, statusCounts)}<th>Notes</th><th>Public URL</th><th>Code</th><th>Size</th>${sortHeader("Last Published", "pub")}${filterHeader("By", "by", byOptions, byFilter, setByFilter, byCounts)}<th style=${{ textAlign: "right" }}>Actions</th></tr></thead>
             <tbody>
               ${visible.map(function (pg) {
                 var m = pagesMeta[pg.slug];
