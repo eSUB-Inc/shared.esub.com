@@ -213,3 +213,9 @@ td.notes-edit:hover .noteicon { opacity: 1; }
 .actrow.muted .material-icons-outlined { color: var(--muted); }
 .actrow .pgtitle { margin-left: auto; white-space: nowrap; }
 .kbdhint { font-size: 11.5px; color: var(--muted); text-align: center; margin-top: 14px; }
+
+/* Favorites */
+.favcell { width: 34px; padding-right: 0 !important; }
+.iconbtn.fav { color: var(--muted); }
+.iconbtn.fav.on { color: var(--coral); }
+.iconbtn.fav.on:hover { color: var(--coral-active); }

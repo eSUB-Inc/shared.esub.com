@@ -231,6 +231,8 @@
     var sharedToMe = meta && me && meta.owner !== me.email && (meta.sharedWith || []).indexOf(me.email) >= 0;
     var foreign = meta && me && meta.owner !== me.email && !sharedToMe;
     return html`<tr>
+      <td class="favcell"><button class="iconbtn fav ${props.fav ? "on" : ""}" data-tip=${props.fav ? "Unfavorite" : "Favorite — pins to the top"}
+        onClick=${function () { props.onFav(pg); }}>${icon(props.fav ? "star" : "star_border")}</button></td>
       <td><div class="pgname">${pg.slug}</div>${pg.title && html`<div class="pgtitle">${pg.title}</div>`}
         ${sharedToMe && html`<div class="pgowner"><span class="sharedchip">SHARED</span> ${meta.ownerName || meta.owner}</div>`}
         ${foreign && html`<div class="pgowner">${meta.ownerName || meta.owner}${(meta.sharedWith || []).length ? " · shared with " + meta.sharedWith.length : ""}</div>`}
@@ -284,6 +286,7 @@
     var s8 = useState(null); var loadErr = s8[0], setLoadErr = s8[1];
     var s9 = useState({}); var pagesMeta = s9[0], setPagesMeta = s9[1]; // slug -> ownership record
     var s10 = useState("pages"); var view = s10[0], setView = s10[1];
+    var s11 = useState([]); var favs = s11[0], setFavs = s11[1]; // starred slugs, pinned to the top
     var toastPair = useToasts(); var toasts = toastPair[0], toast = toastPair[1], dismissToast = toastPair[2];
     var copy = function (text, label) { copyText(text, toast, label); };
     var pendingRef = useRef(pending); pendingRef.current = pending;
@@ -304,6 +307,28 @@
       setLoading(false);
     }
     useEffect(function () { reload(); }, []);
+
+    // Favorites: stored per-user through the proxy so they follow the user
+    // across browsers; localStorage is the PAT-fallback home. Loaded once.
+    useEffect(function () {
+      if (proxyOn) {
+        window.ProxyApi.get("/favorites").then(function (f) { setFavs(Array.isArray(f) ? f : []); }).catch(function () {});
+      } else {
+        try { setFavs(JSON.parse(localStorage.getItem("shared-admin-favs") || "[]")); } catch (e) {}
+      }
+    }, []);
+
+    async function toggleFav(pg) {
+      var has = favs.indexOf(pg.slug) >= 0;
+      var next = has ? favs.filter(function (s) { return s !== pg.slug; }) : favs.concat(pg.slug);
+      setFavs(next); // optimistic — the star responds instantly
+      if (proxyOn) {
+        try { await window.ProxyApi.post("/favorites", { set: next }); }
+        catch (e) { setFavs(favs); toast("Could not save favorite: " + e.message, "error"); }
+      } else {
+        try { localStorage.setItem("shared-admin-favs", JSON.stringify(next)); } catch (e) {}
+      }
+    }
 
     // Poll pending publishes.
     useEffect(function () {
@@ -456,8 +481,15 @@
       var cmp = sort.key === "pub"
         ? function (a, b) { return ((a.lastPublished || "").localeCompare(b.lastPublished || "")) * sort.dir; }
         : function (a, b) { return a.slug.localeCompare(b.slug) * sort.dir; };
-      return list.slice().sort(cmp);
-    }, [scopedPages, search, sort, byFilter, statusFilter, pending]);
+      // Favorites stay pinned above everything, whatever the active sort.
+      var favSet = {};
+      favs.forEach(function (s) { favSet[s] = 1; });
+      return list.slice().sort(function (a, b) {
+        var fa = favSet[a.slug] ? 0 : 1, fb = favSet[b.slug] ? 0 : 1;
+        if (fa !== fb) return fa - fb;
+        return cmp(a, b);
+      });
+    }, [scopedPages, search, sort, byFilter, statusFilter, pending, favs]);
 
     var pageSize = CFG.publishing.pageSize;
     var totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -567,12 +599,13 @@
                 : "No pages yet. Upload the first one."}
             </div>`
           : html`<div class="tablewrap"><table>
-            <thead><tr>${sortHeader("Page", "name")}${filterHeader("Status", "status", statusOptions, statusFilter, setStatusFilter, statusCounts)}<th>Notes</th><th>Public URL</th><th>Access Code</th><th>Size</th>${sortHeader("Last Published", "pub")}${filterHeader("By", "by", byOptions, byFilter, setByFilter, byCounts)}<th style=${{ textAlign: "right" }}>Actions</th></tr></thead>
+            <thead><tr><th class="favcell"></th>${sortHeader("Page", "name")}${filterHeader("Status", "status", statusOptions, statusFilter, setStatusFilter, statusCounts)}<th>Notes</th><th>Public URL</th><th>Access Code</th><th>Size</th>${sortHeader("Last Published", "pub")}${filterHeader("By", "by", byOptions, byFilter, setByFilter, byCounts)}<th style=${{ textAlign: "right" }}>Actions</th></tr></thead>
             <tbody>
               ${visible.map(function (pg) {
                 var m = pagesMeta[pg.slug];
                 return html`<${Row} key=${pg.slug + pg.status} page=${pg} pending=${pendingBySlug[pg.slug]} copy=${copy} onFail=${failModal}
                   meta=${m} me=${me}
+                  fav=${favs.indexOf(pg.slug) >= 0} onFav=${toggleFav}
                   canShare=${proxyOn && m && (isAdminUser || m.owner === me.email)}
                   onShare=${function (p) { setModal({ kind: "share", page: p, meta: pagesMeta[p.slug] }); }}
                   onCode=${function (p) { setModal({ kind: "code", page: p }); }}
