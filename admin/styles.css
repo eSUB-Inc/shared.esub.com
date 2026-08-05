@@ -1,6 +1,11 @@
 /* eSUB Shared Admin — same eSUB coral/slate brand as the site shell (see /index.html). */
 :root {
   --coral: #fcba03; --coral-hover: #ffa500; --coral-active: #e0a600;
+  /* The brand amber is a fill/border colour: as TEXT or an icon on a light
+     surface it fails contrast badly (1.7:1 on white). --accent-text is the
+     readable stand-in for those cases (5.4:1 on white); in dark mode the amber
+     itself is the accessible choice, so the token flips back to it below. */
+  --accent-text: #8a6400; --accent-text-hover: #6d4f00;
   --slate: #323a42; --ink: #0a121a; --muted: #5a626a; --border: #d7d7d7;
   --bg: #ffffff; --bg-soft: #f5f6f7; --card: #ffffff; --text: #323a42; --heading: #0a121a;
   --green: #2e7d32; --green-soft: #e6f2e7; --amber: #b26a00; --amber-soft: #fdf3e3;
@@ -12,12 +17,14 @@
     --bg: #0a121a; --bg-soft: #10191f; --card: #1a232b; --text: #d7d7d7; --heading: #fff;
     --muted: #9aa4ad; --border: #3d4650; --green-soft: #17301c; --amber-soft: #33270e;
     --red-soft: #3a1715; --chip-grey: #26313a;
+    --accent-text: var(--coral); --accent-text-hover: var(--coral-hover);
   }
 }
 :root[data-theme="dark"] {
   --bg: #0a121a; --bg-soft: #10191f; --card: #1a232b; --text: #d7d7d7; --heading: #fff;
   --muted: #9aa4ad; --border: #3d4650; --green-soft: #17301c; --amber-soft: #33270e;
   --red-soft: #3a1715; --chip-grey: #26313a;
+  --accent-text: var(--coral); --accent-text-hover: var(--coral-hover);
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; min-height: 100%; }
@@ -26,8 +33,8 @@ body {
   background: var(--bg-soft); color: var(--text); font-size: 14px; line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
-a { color: var(--coral); font-weight: 600; text-decoration: none; transition: color .2s ease; }
-a:hover { color: var(--coral-hover); text-decoration: underline; }
+a { color: var(--accent-text); font-weight: 600; text-decoration: none; transition: color .2s ease; }
+a:hover { color: var(--accent-text-hover); text-decoration: underline; }
 button { font-family: inherit; }
 .material-icons-outlined { font-size: 18px; vertical-align: middle; }
 
@@ -87,7 +94,7 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 thead th { text-align: left; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 10px 16px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 th.th-click { cursor: pointer; user-select: none; position: relative; }
 th.th-click:hover { color: var(--heading); }
-th.th-filtered { color: var(--coral-active); }
+th.th-filtered { color: var(--accent-text); }
 .tharrow { display: inline-block; width: 12px; margin-left: 3px; }
 .thfilter { font-size: 14px; margin-left: 3px; vertical-align: -3px; }
 .filter-pop { position: fixed; z-index: 40; background: var(--card); border: 1px solid var(--border); border-radius: 5px; box-shadow: 0 8px 24px rgba(10,18,26,.18); padding: 8px 0; min-width: 160px; text-transform: none; letter-spacing: 0; font-weight: 400; }
@@ -222,7 +229,7 @@ td.pgcell { min-width: 230px; overflow-wrap: anywhere; }
 .userpages li { padding: 6px 0; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; }
 .acttimeline { max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; }
 .actrow { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 13.5px; }
-.actrow .material-icons-outlined { font-size: 16px; color: var(--coral-active); }
+.actrow .material-icons-outlined { font-size: 16px; color: var(--accent-text); }
 .actrow.muted .material-icons-outlined { color: var(--muted); }
 .actrow .pgtitle { margin-left: auto; white-space: nowrap; }
 .kbdhint { font-size: 11.5px; color: var(--muted); text-align: center; margin-top: 14px; }
@@ -230,5 +237,5 @@ td.pgcell { min-width: 230px; overflow-wrap: anywhere; }
 /* Favorites */
 .favcell { width: 34px; padding-right: 0 !important; }
 .iconbtn.fav { color: var(--muted); }
-.iconbtn.fav.on { color: var(--coral); }
-.iconbtn.fav.on:hover { color: var(--coral-active); }
+.iconbtn.fav.on { color: var(--accent-text); }
+.iconbtn.fav.on:hover { color: var(--accent-text-hover); }
