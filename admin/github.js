@@ -16,14 +16,16 @@
   function setToken(t) { token = t; }
   function proxyMode() { return !!P.baseUrl; }
 
-  async function req(method, path, body) {
+  // `action` ({kind, slug}) is proxy-mode metadata: the worker logs the verified
+  // user's page action server-side and maintains ownership records from it.
+  async function req(method, path, body, action) {
     var res;
     if (proxyMode()) {
       var idToken = await window.AdminAuth.getApiToken();
       res = await fetch(P.baseUrl.replace(/\/+$/, "") + "/gh", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + idToken },
-        body: JSON.stringify({ method: method, path: path, body: body || null }),
+        body: JSON.stringify({ method: method, path: path, body: body || null, action: action || null }),
       });
     } else {
       res = await fetch(API + path, {
@@ -74,16 +76,16 @@
     return req("GET", "/repos/" + G.owner + "/" + repo + "/git/trees/" + G.branch + "?recursive=1");
   }
 
-  function putFile(repo, path, base64Content, message, sha) {
+  function putFile(repo, path, base64Content, message, sha, action) {
     var body = { message: message, content: base64Content, branch: G.branch };
     if (sha) body.sha = sha;
-    return req("PUT", "/repos/" + G.owner + "/" + repo + "/contents/" + encodeURI(path), body);
+    return req("PUT", "/repos/" + G.owner + "/" + repo + "/contents/" + encodeURI(path), body, action);
   }
 
-  function deleteFile(repo, path, sha, message) {
+  function deleteFile(repo, path, sha, message, action) {
     return req("DELETE", "/repos/" + G.owner + "/" + repo + "/contents/" + encodeURI(path), {
       message: message, sha: sha, branch: G.branch,
-    });
+    }, action);
   }
 
   // Latest commit touching a path -> { date, authorName } or null.
@@ -100,37 +102,63 @@
   }
 
   // Move every file under fromDir to toDir in the private repo (copy + delete).
-  async function moveDir(repo, fromDir, toDir, message) {
+  async function moveDir(repo, fromDir, toDir, message, action) {
     var entries = await listDir(repo, fromDir);
     if (entries.notFound) throw new Error("Folder not found: " + fromDir);
     for (var i = 0; i < entries.length; i++) {
       var e = entries[i];
-      if (e.type === "dir") { await moveDir(repo, e.path, toDir + "/" + e.name, message); continue; }
+      if (e.type === "dir") { await moveDir(repo, e.path, toDir + "/" + e.name, message, action); continue; }
       var f = await getFile(repo, e.path);
       // Defense-in-depth: never copy empty content over a non-empty original —
       // a truncated copy followed by the delete below would be data loss.
       if (e.size > 0 && !(f && f.content && f.content.length)) {
         throw new Error("Could not read " + e.path + " from the API — move aborted to protect the file.");
       }
-      await putFile(repo, toDir + "/" + e.name, f.content.replace(/\n/g, ""), message);
-      await deleteFile(repo, e.path, f.sha, message);
+      await putFile(repo, toDir + "/" + e.name, f.content.replace(/\n/g, ""), message, undefined, action);
+      await deleteFile(repo, e.path, f.sha, message, action);
     }
   }
 
-  async function deleteDir(repo, dir, message) {
+  async function deleteDir(repo, dir, message, action) {
     var entries = await listDir(repo, dir);
     if (entries.notFound) return;
     for (var i = 0; i < entries.length; i++) {
       var e = entries[i];
-      if (e.type === "dir") { await deleteDir(repo, e.path, message); continue; }
+      if (e.type === "dir") { await deleteDir(repo, e.path, message, action); continue; }
       var f = await getFile(repo, e.path);
-      await deleteFile(repo, e.path, f.sha, message);
+      await deleteFile(repo, e.path, f.sha, message, action);
     }
+  }
+
+  // Auth-proxy REST helper for the non-GitHub endpoints (/me, /users, /pages,
+  // /page-share, /user-status, /user-role, /activity, /logins). Proxy mode only.
+  async function proxyReq(method, path, body) {
+    if (!proxyMode()) throw new Error("Not available without the auth proxy");
+    var idToken = await window.AdminAuth.getApiToken();
+    var res = await fetch(P.baseUrl.replace(/\/+$/, "") + path, {
+      method: method,
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + idToken },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    var data = null;
+    try { data = await res.json(); } catch (e) {}
+    if (!res.ok) {
+      var err = new Error((data && data.error) || "Proxy " + method + " " + path + " -> " + res.status);
+      err.status = res.status;
+      err.code = data && data.error;
+      throw err;
+    }
+    return data;
   }
 
   window.GitHubApi = {
     setToken: setToken, verifyToken: verifyToken, listDir: listDir, getFile: getFile,
     getTree: getTree, putFile: putFile, deleteFile: deleteFile, latestCommit: latestCommit,
     moveDir: moveDir, deleteDir: deleteDir,
+  };
+  window.ProxyApi = {
+    enabled: proxyMode,
+    get: function (path) { return proxyReq("GET", path); },
+    post: function (path, body) { return proxyReq("POST", path, body); },
   };
 })();

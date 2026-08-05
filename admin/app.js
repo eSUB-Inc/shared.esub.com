@@ -223,11 +223,18 @@
   }
 
   function Row(props) {
-    var pg = props.page, copy = props.copy;
+    var pg = props.page, copy = props.copy, meta = props.meta, me = props.me;
     var archived = pg.status === "archived";
     var secure = pg.url + "#code=" + encodeURIComponent(pg.code || "");
+    // Ownership line: a page shared WITH the viewer gets a SHARED badge + the
+    // owner's name; an admin browsing someone else's page sees the owner name.
+    var sharedToMe = meta && me && meta.owner !== me.email && (meta.sharedWith || []).indexOf(me.email) >= 0;
+    var foreign = meta && me && meta.owner !== me.email && !sharedToMe;
     return html`<tr>
-      <td><div class="pgname">${pg.slug}</div>${pg.title && html`<div class="pgtitle">${pg.title}</div>`}</td>
+      <td><div class="pgname">${pg.slug}</div>${pg.title && html`<div class="pgtitle">${pg.title}</div>`}
+        ${sharedToMe && html`<div class="pgowner"><span class="sharedchip">SHARED</span> ${meta.ownerName || meta.owner}</div>`}
+        ${foreign && html`<div class="pgowner">${meta.ownerName || meta.owner}${(meta.sharedWith || []).length ? " · shared with " + meta.sharedWith.length : ""}</div>`}
+      </td>
       <td><${StatusChip} page=${pg} pending=${props.pending} onFail=${props.onFail} /></td>
       <td class="notes ${archived ? "" : "notes-edit"}"
         title=${pg.notes ? pg.notes + (archived ? "" : "\n\n(click to edit)") : archived ? undefined : "Click to add notes"}
@@ -243,8 +250,9 @@
       <td>${pg.publishedBy || "—"}</td>
       <td><div class="rowactions">
         ${!archived && html`<button class="iconbtn" data-tip="Update HTML" onClick=${function () { props.onUpdate(pg); }}>${icon("upload_file")}</button>
-        <button class="iconbtn" data-tip="Reset access code" onClick=${function () { props.onReset(pg); }}>${icon("lock_reset")}</button>
-        <button class="iconbtn" data-tip="Archive (unpublish)" onClick=${function () { props.onArchive(pg); }}>${icon("inventory_2")}</button>`}
+        <button class="iconbtn" data-tip="Reset access code" onClick=${function () { props.onReset(pg); }}>${icon("lock_reset")}</button>`}
+        ${props.canShare && html`<button class="iconbtn" data-tip="Share (grant page admin)" onClick=${function () { props.onShare(pg); }}>${icon("share")}</button>`}
+        ${!archived && html`<button class="iconbtn" data-tip="Archive (unpublish)" onClick=${function () { props.onArchive(pg); }}>${icon("inventory_2")}</button>`}
         ${archived && html`<button class="iconbtn" data-tip="Restore (republish, new code)" onClick=${function () { props.onRestore(pg); }}>${icon("restore")}</button>`}
         <button class="iconbtn danger" data-tip="Delete permanently" onClick=${function () { props.onDelete(pg); }}>${icon("delete_outline")}</button>
       </div></td>
@@ -260,7 +268,9 @@
   }
 
   function Main(props) {
-    var store = props.store, user = props.user;
+    var store = props.store, user = props.user, me = props.me;
+    var isAdminUser = me && me.role === "admin";
+    var proxyOn = window.ProxyApi.enabled();
     var s1 = useState([]); var pages = s1[0], setPages = s1[1];
     var s2 = useState(true); var loading = s2[0], setLoading = s2[1];
     var s3 = useState(""); var search = s3[0], setSearch = s3[1];
@@ -272,13 +282,24 @@
     var s6 = useState([]); var pending = s6[0], setPending = s6[1];
     var s7 = useState(null); var modal = s7[0], setModal = s7[1];
     var s8 = useState(null); var loadErr = s8[0], setLoadErr = s8[1];
+    var s9 = useState({}); var pagesMeta = s9[0], setPagesMeta = s9[1]; // slug -> ownership record
+    var s10 = useState("pages"); var view = s10[0], setView = s10[1];
     var toastPair = useToasts(); var toasts = toastPair[0], toast = toastPair[1], dismissToast = toastPair[2];
     var copy = function (text, label) { copyText(text, toast, label); };
     var pendingRef = useRef(pending); pendingRef.current = pending;
 
     async function reload() {
       setLoading(true); setLoadErr(null);
-      try { setPages(await store.loadPages()); }
+      try {
+        var results = await Promise.all([
+          store.loadPages(),
+          proxyOn ? window.ProxyApi.get("/pages").catch(function () { return []; }) : Promise.resolve([]),
+        ]);
+        setPages(results[0]);
+        var meta = {};
+        (results[1] || []).forEach(function (m) { if (m && m.slug) meta[m.slug] = m; });
+        setPagesMeta(meta);
+      }
       catch (e) { setLoadErr(e.message); }
       setLoading(false);
     }
@@ -395,6 +416,14 @@
     var pendingBySlug = {};
     pending.forEach(function (p) { pendingBySlug[p.slug] = p; });
 
+    async function doShare(pg, emails) {
+      await window.ProxyApi.post("/page-share", { slug: pg.slug, set: emails });
+      audit(user, "share", pg.slug, emails.join(","));
+      setModal(null);
+      toast("Sharing updated for " + pg.slug);
+      reload();
+    }
+
     async function doSaveNotes(pg, notes) {
       await store.saveNotes(pg.slug, notes);
       audit(user, "edit-notes", pg.slug, JSON.stringify({ from: pg.notes || "", to: notes }));
@@ -404,9 +433,21 @@
     }
 
     // ----- derived list -----
+    // Standard users see only pages they own or that were shared with them
+    // (plus their own just-submitted uploads, whose ownership record may still
+    // be landing). Admins and the PAT fallback see everything.
+    var scopedPages = useMemo(function () {
+      if (isAdminUser || !proxyOn) return pages;
+      return pages.filter(function (p) {
+        var m = pagesMeta[p.slug];
+        if (m && (m.owner === me.email || (m.sharedWith || []).indexOf(me.email) >= 0)) return true;
+        return !!pendingBySlug[p.slug];
+      });
+    }, [pages, pagesMeta, pending, me]);
+
     var filtered = useMemo(function () {
       var q = search.trim().toLowerCase();
-      var list = pages.filter(function (p) {
+      var list = scopedPages.filter(function (p) {
         if (q && p.slug.indexOf(q) < 0 && (p.title || "").toLowerCase().indexOf(q) < 0) return false;
         if (byFilter.length && byFilter.indexOf(p.publishedBy || "—") < 0) return false;
         if (statusFilter.length && statusFilter.indexOf(effStatus(p, pendingBySlug[p.slug])) < 0) return false;
@@ -416,7 +457,7 @@
         ? function (a, b) { return ((a.lastPublished || "").localeCompare(b.lastPublished || "")) * sort.dir; }
         : function (a, b) { return a.slug.localeCompare(b.slug) * sort.dir; };
       return list.slice().sort(cmp);
-    }, [pages, search, sort, byFilter, statusFilter, pending]);
+    }, [scopedPages, search, sort, byFilter, statusFilter, pending]);
 
     var pageSize = CFG.publishing.pageSize;
     var totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -455,9 +496,9 @@
       </th>`;
     }
     var byOptions = useMemo(function () {
-      var s = {}; pages.forEach(function (p) { s[p.publishedBy || "\u2014"] = 1; });
+      var s = {}; scopedPages.forEach(function (p) { s[p.publishedBy || "\u2014"] = 1; });
       return Object.keys(s).sort();
-    }, [pages]);
+    }, [scopedPages]);
     var statusOptions = ["Published", "Publishing", "Unpublishing", "Archived", "Failed"];
     // Per-option row counts, each dimension judged against search + the OTHER
     // filter. Plain render-time computation so an open popover tracks status
@@ -465,7 +506,7 @@
     var statusCounts = {}, byCounts = {};
     (function () {
       var q = search.trim().toLowerCase();
-      pages.forEach(function (p) {
+      scopedPages.forEach(function (p) {
         if (q && p.slug.indexOf(q) < 0 && (p.title || "").toLowerCase().indexOf(q) < 0) return;
         var st = effStatus(p, pendingBySlug[p.slug]);
         var by = p.publishedBy || "\u2014";
@@ -482,12 +523,14 @@
         <span class="brand">e<span>SUB</span> Shared</span>
         <span class="tag">Publishing Admin</span>
         <span class="spacer"></span>
-        ${CFG.proxy && CFG.proxy.baseUrl && html`<button class="iconbtn themebtn" data-tip="Sign-in activity" onClick=${function () { setModal({ kind: "activity" }); }}>${icon("monitoring")}</button>`}
+        ${isAdminUser && proxyOn && html`<button class="hdrbtn ${view === "users" ? "on" : ""}" onClick=${function () { setView(view === "users" ? "pages" : "users"); }}>${icon("group")} Users</button>`}
+        ${isAdminUser && proxyOn && html`<button class="iconbtn themebtn" data-tip="Sign-in activity" onClick=${function () { setModal({ kind: "activity" }); }}>${icon("monitoring")}</button>`}
         <${ThemeToggle} />
         <span class="user"><span class="avatar">${(user.firstName || "?").slice(0, 1).toUpperCase()}</span>${user.name}</span>
         <button class="signout" onClick=${props.onSignOut}>Sign out</button>
       </header>
-      <div class="wrap">
+      ${view === "users" && html`<${UsersView} me=${me} pages=${pages} pagesMeta=${pagesMeta} toast=${toast} onExit=${function () { setView("pages"); }} />`}
+      <div class="wrap" style=${view === "users" ? { display: "none" } : undefined}>
         <div class="toolbar">
           <h1>Pages</h1>
           <span class="grow"></span>
@@ -527,7 +570,11 @@
             <thead><tr>${sortHeader("Page", "name")}${filterHeader("Status", "status", statusOptions, statusFilter, setStatusFilter, statusCounts)}<th>Notes</th><th>Public URL</th><th>Access Code</th><th>Size</th>${sortHeader("Last Published", "pub")}${filterHeader("By", "by", byOptions, byFilter, setByFilter, byCounts)}<th style=${{ textAlign: "right" }}>Actions</th></tr></thead>
             <tbody>
               ${visible.map(function (pg) {
+                var m = pagesMeta[pg.slug];
                 return html`<${Row} key=${pg.slug + pg.status} page=${pg} pending=${pendingBySlug[pg.slug]} copy=${copy} onFail=${failModal}
+                  meta=${m} me=${me}
+                  canShare=${proxyOn && m && (isAdminUser || m.owner === me.email)}
+                  onShare=${function (p) { setModal({ kind: "share", page: p, meta: pagesMeta[p.slug] }); }}
                   onCode=${function (p) { setModal({ kind: "code", page: p }); }}
                   onNotes=${function (p) { setModal({ kind: "notes", page: p }); }}
                   onUpdate=${function (p) { setModal({ kind: "update", page: p }); }}
@@ -568,6 +615,7 @@
       ${modal && modal.kind === "notes" && html`<${NotesModal} page=${modal.page} onClose=${function () { setModal(null); }} onSave=${doSaveNotes} />`}
       ${modal && modal.kind === "fail" && html`<${FailModal} pending=${modal.pending} copy=${copy} onClose=${function () { setModal(null); }} />`}
       ${modal && modal.kind === "activity" && html`<${ActivityModal} onClose=${function () { setModal(null); }} />`}
+      ${modal && modal.kind === "share" && html`<${ShareModal} page=${modal.page} meta=${modal.meta} me=${me} onClose=${function () { setModal(null); }} onSave=${doShare} />`}
       <${Toasts} items=${toasts} onDismiss=${dismissToast} />
     </div>`;
   }
@@ -686,6 +734,244 @@
     <//>`;
   }
 
+  // Share a page: the owner (or an admin) grants other signed-in users full
+  // control of the page — it appears in their list with a SHARED badge.
+  function ShareModal(props) {
+    var meta = props.meta || {};
+    var s1 = useState(null); var people = s1[0], setPeople = s1[1];
+    var s2 = useState((meta.sharedWith || []).slice()); var sel = s2[0], setSel = s2[1];
+    var s3 = useState(null); var err = s3[0], setErr = s3[1];
+    var s4 = useState(false); var busy = s4[0], setBusy = s4[1];
+    useEffect(function () {
+      window.ProxyApi.get("/people")
+        .then(function (list) { setPeople(list.filter(function (p) { return p.email !== meta.owner; })); })
+        .catch(function (e) { setErr(e.message); });
+    }, []);
+    function toggle(email) {
+      setSel(sel.indexOf(email) >= 0 ? sel.filter(function (x) { return x !== email; }) : sel.concat(email));
+    }
+    async function save() {
+      setBusy(true); setErr(null);
+      try { await props.onSave(props.page, sel); }
+      catch (e) { setErr(e.message); setBusy(false); }
+    }
+    return html`<${Modal} onClose=${props.onClose}>
+      <h2>Share “${props.page.slug}”</h2>
+      <p class="sub">People you share with get full admin control of this page — it appears in their list marked <strong>SHARED</strong> with ${meta.owner === props.me.email ? "your" : "the owner's"} name. Only people who have signed in to this admin at least once can be selected.</p>
+      ${err && html`<p class="errline">${err}</p>`}
+      ${people == null ? html`<div class="empty">Loading people…</div>`
+      : people.length === 0 ? html`<div class="empty">No one else has signed in yet — there is nobody to share with.</div>`
+      : html`<div class="sharelist">${people.map(function (p) {
+          return html`<label key=${p.email}><input type="checkbox" checked=${sel.indexOf(p.email) >= 0} onChange=${function () { toggle(p.email); }} /> ${p.name} <span class="pgtitle">${p.email}</span></label>`;
+        })}</div>`}
+      <div class="actions">
+        <button class="btn btn-quiet" onClick=${props.onClose}>Cancel</button>
+        <button class="btn btn-primary" disabled=${busy || people == null} onClick=${save}>${busy ? "Saving…" : "Save Sharing"}</button>
+      </div>
+    <//>`;
+  }
+
+  // ---------- Users (admin only) ----------
+  var ACTION_LABELS = {
+    publish: { text: "Published", ic: "publish" }, revise: { text: "Revised", ic: "upload_file" },
+    archive: { text: "Archived", ic: "inventory_2" }, restore: { text: "Restored", ic: "restore" },
+    "delete": { text: "Deleted", ic: "delete_outline" }, "reset-code": { text: "Reset code", ic: "lock_reset" },
+    "edit-notes": { text: "Edited notes", ic: "edit" }, share: { text: "Shared", ic: "share" },
+  };
+
+  function RoleChip(props) {
+    var u = props.user;
+    if (u.roleLocked) {
+      return html`<span class="chip published rolechip locked" data-tip="Bootstrap admin (ADMIN_EMAILS) — role is fixed">${icon("verified_user")}admin</span>`;
+    }
+    // Click toggles the role in place (admin <-> standard).
+    return html`<span class="chip ${u.role === "admin" ? "published" : "archived"} rolechip" data-tip="Click to make ${u.role === "admin" ? "standard" : "admin"}"
+      onClick=${function (e) { e.stopPropagation(); props.onToggle(u); }}>${icon(u.role === "admin" ? "verified_user" : "person")}${u.role}</span>`;
+  }
+
+  function UsersView(props) {
+    var me = props.me, pagesMeta = props.pagesMeta, toast = props.toast;
+    var s1 = useState(null); var users = s1[0], setUsers = s1[1];
+    var s2 = useState(null); var err = s2[0], setErr = s2[1];
+    var s3 = useState(""); var q = s3[0], setQ = s3[1];
+    var s4 = useState(0); var selIdx = s4[0], setSelIdx = s4[1];
+    var s5 = useState(null); var detail = s5[0], setDetail = s5[1];
+    var s6 = useState(null); var activity = s6[0], setActivity = s6[1];
+    var s7 = useState(null); var confirm = s7[0], setConfirm = s7[1];
+    var searchRef = useRef(null);
+
+    // Live page status by slug (from the already-loaded pages list) so counts
+    // reflect what is actually on the site right now.
+    var statusBySlug = {};
+    (props.pages || []).forEach(function (p) { statusBySlug[p.slug] = p.status; });
+
+    function statsFor(u) {
+      var owned = Object.keys(pagesMeta).map(function (k) { return pagesMeta[k]; })
+        .filter(function (m) { return m.owner === u.email; });
+      var active = owned.filter(function (m) { return statusBySlug[m.slug] && statusBySlug[m.slug] !== "archived"; });
+      var sharedOut = owned.filter(function (m) { return (m.sharedWith || []).length > 0; });
+      return { owned: owned, active: active.length, sharedOut: sharedOut.length };
+    }
+
+    async function load() {
+      setErr(null);
+      try { setUsers(await window.ProxyApi.get("/users")); }
+      catch (e) { setErr(e.message); }
+    }
+    useEffect(function () { load(); }, []);
+
+    var list = (users || []).filter(function (u) {
+      var needle = q.trim().toLowerCase();
+      if (!needle) return true;
+      return (u.name || "").toLowerCase().indexOf(needle) >= 0 || (u.email || "").toLowerCase().indexOf(needle) >= 0;
+    }).sort(function (a, b) { return (a.name || a.email).localeCompare(b.name || b.email); });
+
+    function openDetail(u) {
+      setDetail(u); setActivity(null);
+      window.ProxyApi.get("/activity?days=60&user=" + encodeURIComponent(u.email))
+        .then(setActivity)
+        .catch(function (e) { setActivity({ error: e.message }); });
+    }
+
+    async function toggleRole(u) {
+      var next = u.role === "admin" ? "standard" : "admin";
+      try {
+        await window.ProxyApi.post("/user-role", { email: u.email, role: next });
+        toast(u.name + " is now " + next);
+        setUsers(users.map(function (x) { return x.email === u.email ? Object.assign({}, x, { role: next }) : x; }));
+        if (detail && detail.email === u.email) setDetail(Object.assign({}, detail, { role: next }));
+      } catch (e) { toast("Role change failed: " + e.message, "error"); }
+    }
+
+    async function setDisabled(u, disabled) {
+      setConfirm(null);
+      try {
+        await window.ProxyApi.post("/user-status", { email: u.email, disabled: disabled });
+        toast(u.name + (disabled ? " disabled — they'll be told to open a Help Desk ticket" : " re-enabled"));
+        setUsers(users.map(function (x) { return x.email === u.email ? Object.assign({}, x, { disabled: disabled }) : x; }));
+        if (detail && detail.email === u.email) setDetail(Object.assign({}, detail, { disabled: disabled }));
+      } catch (e) { toast("Update failed: " + e.message, "error"); }
+    }
+
+    // Keyboard shortcuts: / focuses search, arrows move the highlight, Enter
+    // opens the highlighted user, Esc backs out (detail -> list -> Pages).
+    var kbRef = useRef();
+    kbRef.current = { list: list, selIdx: selIdx, detail: detail, confirm: confirm };
+    useEffect(function () {
+      function onKey(e) {
+        var st = kbRef.current;
+        var typing = e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA");
+        if (e.key === "Escape") {
+          if (st.confirm) return; // the confirm modal handles its own Esc
+          e.preventDefault();
+          if (typing) { e.target.blur(); return; }
+          if (st.detail) { setDetail(null); setActivity(null); } else props.onExit();
+          return;
+        }
+        if (typing) return;
+        if (e.key === "/") { e.preventDefault(); if (searchRef.current) searchRef.current.focus(); return; }
+        if (st.detail) return;
+        if (e.key === "ArrowDown") { e.preventDefault(); setSelIdx(Math.min(st.selIdx + 1, st.list.length - 1)); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); setSelIdx(Math.max(st.selIdx - 1, 0)); }
+        else if (e.key === "Enter" && st.list[st.selIdx]) { e.preventDefault(); openDetail(st.list[st.selIdx]); }
+      }
+      document.addEventListener("keydown", onKey);
+      return function () { document.removeEventListener("keydown", onKey); };
+    }, []);
+    useEffect(function () { setSelIdx(0); }, [q, users]);
+
+    function fmtEvt(e) {
+      var map = { login_success: "Signed in", login_failure: "Failed sign-in", unauthorized_api: "Unauthorized call", disabled_login: "Attempted while disabled", account_disabled_by_admin: "Account disabled", account_enabled_by_admin: "Account enabled", role_changed: "Role changed" };
+      return map[e.type] || e.type;
+    }
+
+    var body;
+    if (err) body = html`<div class="card"><div class="empty">Unable to load users: ${err}<div style=${{ marginTop: "12px" }}><button class="btn btn-quiet" onClick=${load}>Retry</button></div></div></div>`;
+    else if (users == null) body = html`<div class="card"><div class="empty">Loading users…</div></div>`;
+    else if (detail) {
+      var st = statsFor(detail);
+      body = html`<div>
+        <button class="btn btn-quiet" onClick=${function () { setDetail(null); setActivity(null); }}>${icon("arrow_back")} All users</button>
+        <div class="card userdetail">
+          <div class="userdetail-head">
+            <span class="avatar big">${(detail.firstName || detail.email).slice(0, 1).toUpperCase()}</span>
+            <div style=${{ flex: 1 }}>
+              <h2 style=${{ margin: 0 }}>${detail.firstName} ${detail.lastName}</h2>
+              <div class="pgtitle">${detail.email}</div>
+              <div style=${{ marginTop: "6px", display: "flex", gap: "8px", alignItems: "center" }}>
+                <${RoleChip} user=${detail} onToggle=${toggleRole} />
+                ${detail.disabled ? html`<span class="chip failed">${icon("block")}Disabled</span>` : html`<span class="chip published">${icon("check_circle")}Active</span>`}
+              </div>
+            </div>
+            ${detail.disabled
+              ? html`<button class="btn btn-primary" onClick=${function () { setDisabled(detail, false); }}>Enable account</button>`
+              : html`<button class="btn btn-danger" disabled=${detail.roleLocked} onClick=${function () { setConfirm(detail); }}>Disable account</button>`}
+          </div>
+          <div class="userdetail-cols">
+            <div>
+              <h3>Details</h3>
+              <p class="sub">First signed in ${fmtDate(detail.firstSeen)}<br/>Last seen ${fmtDate(detail.lastSeen)}<br/>${st.active} active page(s) · ${st.owned.length} owned total · ${st.sharedOut} shared out</p>
+              <h3>Pages</h3>
+              ${st.owned.length === 0 ? html`<p class="sub">No pages created through the admin.</p>`
+              : html`<ul class="userpages">${st.owned.map(function (m) {
+                  var live = statusBySlug[m.slug];
+                  return html`<li key=${m.slug}><span class="pgname">${m.slug}</span>
+                    <span class="pgtitle">${live ? (live === "archived" ? "archived" : "active") : "deleted"}${(m.sharedWith || []).length ? " · shared with " + m.sharedWith.join(", ") : ""}</span></li>`;
+                })}</ul>`}
+            </div>
+            <div>
+              <h3>Activity — last 60 days</h3>
+              ${activity == null ? html`<p class="sub">Loading…</p>`
+              : activity.error ? html`<p class="errline">${activity.error}</p>`
+              : html`<div class="acttimeline">
+                  ${(activity.actions || []).length === 0 && (activity.logins || []).length === 0 && html`<p class="sub">No recorded activity.</p>`}
+                  ${(activity.actions || []).map(function (x, i) {
+                    var l = ACTION_LABELS[x.kind] || { text: x.kind, ic: "bolt" };
+                    return html`<div class="actrow" key=${"a" + i}>${icon(l.ic)}<span>${l.text} <strong>${x.slug}</strong></span><span class="pgtitle">${fmtDate(x.ts)}</span></div>`;
+                  })}
+                  ${(activity.logins || []).map(function (x, i) {
+                    return html`<div class="actrow muted" key=${"l" + i}>${icon("login")}<span>${fmtEvt(x)}</span><span class="pgtitle">${fmtDate(x.ts)} · ${x.ip || ""}</span></div>`;
+                  })}
+                </div>`}
+            </div>
+          </div>
+        </div>
+      </div>`;
+    } else {
+      body = html`<div class="card">
+        ${list.length === 0 ? html`<div class="empty">No users match.</div>`
+        : html`<div class="tablewrap"><table>
+          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Active Pages</th><th>Shared</th><th>Last Sign-in</th><th>Status</th></tr></thead>
+          <tbody>${list.map(function (u, i) {
+            var st = statsFor(u);
+            return html`<tr key=${u.email} class="userrow ${i === selIdx ? "kbd-sel" : ""}" onClick=${function () { setSelIdx(i); openDetail(u); }}>
+              <td><div class="pgname">${u.firstName} ${u.lastName}</div></td>
+              <td>${u.email}</td>
+              <td><${RoleChip} user=${u} onToggle=${toggleRole} /></td>
+              <td>${st.active}</td>
+              <td>${st.sharedOut}</td>
+              <td style=${{ whiteSpace: "nowrap" }}>${fmtDate(u.lastSeen)}</td>
+              <td>${u.disabled ? html`<span class="chip failed">${icon("block")}Disabled</span>` : html`<span class="chip published">${icon("check_circle")}Active</span>`}</td>
+            </tr>`;
+          })}</tbody>
+        </table></div>`}
+      </div>`;
+    }
+
+    return html`<div class="wrap">
+      <div class="toolbar">
+        <h1>Users</h1>
+        <span class="grow"></span>
+        ${!detail && html`<div class="search">${icon("search")}<input ref=${searchRef} placeholder="Filter users…" value=${q} onInput=${function (e) { setQ(e.target.value); }} /></div>`}
+      </div>
+      ${body}
+      <p class="kbdhint">${detail ? "Esc back to the user list" : "↑ ↓ select · Enter open · / search · Esc back to Pages"}</p>
+      ${confirm && html`<${ConfirmModal} title="Disable account" danger=${true} confirmLabel="Disable Account"
+        body=${confirm.name + " will be blocked from the Publishing Admin. On their next sign-in they'll see a message that their account has been disabled and to open an eSUB Help Desk ticket to restore access. Their pages stay live and owned by them."}
+        onClose=${function () { setConfirm(null); }} onConfirm=${function () { setDisabled(confirm, true); }} />`}
+    </div>`;
+  }
+
   // Sign-in activity monitor: the proxy's KV event log (60-day retention).
   // Entra ID's sign-in logs stay the authoritative record; this is the
   // self-serve view of what reached OUR proxy.
@@ -751,11 +1037,24 @@
     <//>`;
   }
 
+  // Account-disabled gate: shown when /me says disabled. The proxy also
+  // hard-blocks every data call server-side, so this screen is honest.
+  function DisabledScreen(props) {
+    return html`<div class="login-wrap"><div class="card login-card">
+      <p class="brand">e<span>SUB</span> Shared</p>
+      <p class="tag">Publishing Admin</p>
+      <p>Your account has been disabled.</p>
+      <p class="hint" style=${{ marginTop: "12px" }}>To restore access, please open an eSUB Help Desk ticket — <${HelpDesk} suffix="." /></p>
+      <button class="btn btn-quiet" style=${{ marginTop: "18px" }} onClick=${props.onSignOut}>Sign out</button>
+    </div></div>`;
+  }
+
   // ---------- app root ----------
   function App() {
     var s1 = useState("boot"); var phase = s1[0], setPhase = s1[1];
     var s2 = useState(null); var user = s2[0], setUser = s2[1];
     var s3 = useState(null); var store = s3[0], setStore = s3[1];
+    var s4 = useState(null); var me = s4[0], setMe = s4[1];
 
     useEffect(function () {
       (async function () {
@@ -766,10 +1065,22 @@
             setUser(acct);
             // Proxy mode: the Entra login is the only gate — no GitHub token to collect.
             if (CFG.proxy && CFG.proxy.baseUrl) {
+              // Role/profile from the proxy. If the lookup itself fails, fall
+              // back to standard (least privilege) rather than blocking entry.
+              var profile;
+              try { profile = await window.ProxyApi.get("/me"); }
+              catch (e) {
+                profile = { email: (acct.username || "").toLowerCase(), name: acct.name, firstName: acct.firstName, role: "standard", disabled: false, degraded: true };
+              }
+              setMe(profile);
+              if (profile.disabled) { setPhase("disabled"); return; }
               setStore(window.AdminData.makeStore(acct));
               setPhase("app");
               return;
             }
+            // PAT fallback mode has no proxy and therefore no role registry:
+            // whoever holds the team token has full control already.
+            setMe({ email: (acct.username || "").toLowerCase(), name: acct.name, firstName: acct.firstName, role: "admin", disabled: false, patMode: true });
             var pat = null;
             try { pat = sessionStorage.getItem("shared-admin-pat"); } catch (e) {}
             if (pat) {
@@ -790,8 +1101,9 @@
 
     if (phase === "boot") return html`<div class="login-wrap"><div class="empty">Loading…</div></div>`;
     if (phase === "login") return html`<div><${ThemeToggle} floating=${true} /><${LoginScreen} configured=${window.AdminAuth.isConfigured} onLogin=${function () { window.AdminAuth.login(); }} /></div>`;
+    if (phase === "disabled") return html`<div><${ThemeToggle} floating=${true} /><${DisabledScreen} onSignOut=${signOut} /></div>`;
     if (phase === "pat") return html`<div><${ThemeToggle} floating=${true} /><${PatGate} user=${user} onBack=${signOut} onReady=${function () { setStore(window.AdminData.makeStore(user)); setPhase("app"); }} /></div>`;
-    return html`<${Main} store=${store} user=${user} onSignOut=${signOut} />`;
+    return html`<${Main} store=${store} user=${user} me=${me} onSignOut=${signOut} />`;
   }
 
   ReactDOM.createRoot(document.getElementById("root")).render(html`<${App} />`);

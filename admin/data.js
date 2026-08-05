@@ -37,9 +37,9 @@
       return { rows: rows, wb: wb, sheetName: sheetName, sha: f.sha };
     }
 
-    async function writeWorkbook(book, message) {
+    async function writeWorkbook(book, message, action) {
       var out = XLSX.write(book.wb, { type: "base64", bookType: "xlsx" });
-      await gh.putFile(G.privateRepo, "access-codes.xlsx", out, message, book.sha);
+      await gh.putFile(G.privateRepo, "access-codes.xlsx", out, message, book.sha, action);
     }
 
     async function loadPages() {
@@ -105,7 +105,8 @@
       if (existing && existing.content && existing.content.replace(/\n/g, "") === b64) {
         throw new Error("This file is identical to the current source of “" + slug + "” — nothing to republish.");
       }
-      await gh.putFile(G.privateRepo, path, b64, commitMsg(verb, slug), existing ? existing.sha : undefined);
+      await gh.putFile(G.privateRepo, path, b64, commitMsg(verb, slug), existing ? existing.sha : undefined,
+        { kind: existing ? "revise" : "publish", slug: slug });
     }
 
     return {
@@ -135,7 +136,7 @@
           }
         }
         if (!found) throw new Error("No workbook row for " + slug);
-        await writeWorkbook(book, commitMsg("Reset code for", slug));
+        await writeWorkbook(book, commitMsg("Reset code for", slug), { kind: "reset-code", slug: slug });
       },
       saveNotes: async function (slug, notes) {
         var book = await readWorkbook();
@@ -152,16 +153,16 @@
           var pathCell = ws[XLSX.utils.encode_cell({ r: r, c: header.public_path })];
           if (pathCell && String(pathCell.v).replace(/^\/+|\/+$/g, "") === slug) {
             ws[XLSX.utils.encode_cell({ r: r, c: header.notes })] = { t: "s", v: notes };
-            await writeWorkbook(book, commitMsg("Edit notes for", slug));
+            await writeWorkbook(book, commitMsg("Edit notes for", slug), { kind: "edit-notes", slug: slug });
             return;
           }
         }
         throw new Error("No workbook row for " + slug);
       },
-      archivePage: function (slug) { return gh.moveDir(G.privateRepo, "internal/" + slug, "archive/" + slug, commitMsg("Archive", slug)); },
-      restorePage: function (slug) { return gh.moveDir(G.privateRepo, "archive/" + slug, "internal/" + slug, commitMsg("Restore", slug)); },
+      archivePage: function (slug) { return gh.moveDir(G.privateRepo, "internal/" + slug, "archive/" + slug, commitMsg("Archive", slug), { kind: "archive", slug: slug }); },
+      restorePage: function (slug) { return gh.moveDir(G.privateRepo, "archive/" + slug, "internal/" + slug, commitMsg("Restore", slug), { kind: "restore", slug: slug }); },
       deletePage: async function (slug, status) {
-        await gh.deleteDir(G.privateRepo, (status === "archived" ? "archive/" : "internal/") + slug, commitMsg("Delete", slug));
+        await gh.deleteDir(G.privateRepo, (status === "archived" ? "archive/" : "internal/") + slug, commitMsg("Delete", slug), { kind: "delete", slug: slug });
       },
       // Snapshot the public ciphertext sha so an update can detect re-publish.
       // metaOnly: polling must not download multi-MB ciphertext every tick.
