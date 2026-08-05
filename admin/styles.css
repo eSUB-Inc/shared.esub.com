@@ -127,6 +127,10 @@ td.pgcell { min-width: 230px; overflow-wrap: anywhere; }
 }
 /* Right-edge Actions column: pin tooltips to the button's right edge so they stay on-screen. */
 .rowactions .iconbtn[data-tip]:hover::after { left: auto; right: 0; transform: none; }
+/* Favorite star sits at the table's left edge: a centered tooltip runs off the
+   card and collides with the header, so pin it to the button's left edge and
+   show it below. */
+.favcell .iconbtn[data-tip]:hover::after { left: 0; transform: none; bottom: auto; top: calc(100% + 6px); }
 /* Clickable role chips carry the same tooltip affordance as icon buttons. */
 .chip[data-tip] { position: relative; }
 .chip[data-tip]:hover::after {

@@ -1047,7 +1047,7 @@
               <td><span class="chip ${l.cls}">${icon(l.ic)}${l.text}</span></td>
               <td>${r.user || "—"}</td>
               <td style=${{ whiteSpace: "nowrap" }}>${r.ip || "—"}${r.country ? " (" + r.country + ")" : ""}</td>
-              <td class="notes" title=${r.ua ? "UA: " + r.ua : undefined}>${r.detail || "—"}</td>
+              <td class="notes" title=${r.ua ? "UA: " + r.ua : undefined}>${(r.detail && r.detail !== '""') ? r.detail : "—"}</td>
             </tr>`;
           })}</tbody>
         </table></div>`}
