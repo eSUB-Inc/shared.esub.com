@@ -671,7 +671,7 @@
       <h2>Upload New Page</h2>
       <p class="sub">The page is committed to the private repo; a GitHub workflow encrypts it, mints a 4-word access code, and publishes it.</p>
       <label>Page name</label>
-      <input type="text" value=${name} placeholder="e.g. Budget Redesign" onInput=${function (e) { setName(e.target.value); }} />
+      <input type="text" value=${name} placeholder="e.g. Monthly Close Guide" onInput=${function (e) { setName(e.target.value); }} />
       ${slug && html`<p class="hint">URL: <code>${CFG.site.baseUrl}/${slug}/</code>${collision ? html` — <span style=${{ color: "var(--red)", fontWeight: 700 }}>a page with this name already exists</span>` : ""}</p>`}
       <label>HTML file</label>
       <${FilePicker} file=${file} onFile=${setFile} />

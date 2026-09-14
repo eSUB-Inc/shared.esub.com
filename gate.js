@@ -1,6 +1,6 @@
 /* gate.js
  *
- * Client-side, code-based access gate for design previews on shared.esub.com.
+ * Client-side, code-based access gate for pages on shared.esub.com.
  * A gated page ships ONLY an encrypted payload (content.enc). This script
  * prompts the visitor for the page's access code, derives an AES-256-GCM key
  * from that code (PBKDF2-HMAC-SHA256), fetches content.enc, and decrypts it
@@ -14,7 +14,7 @@
  *
  * REQUIRED BOILERPLATE in each gated page's <head>:
  *   <style>html { visibility: hidden; }</style>
- *   <script>window.__DESIGN_GATE__ = { enc: "content.enc", title: "eSUB" };</script>
+ *   <script>window.__PAGE_GATE__ = { enc: "content.enc", title: "eSUB" };</script>
  *   <script src="/gate.js" defer></script>
  *
  * SECURITY MODEL: The page content is genuinely encrypted — without the
@@ -30,9 +30,11 @@
 (function () {
   "use strict";
 
-  var CFG = window.__DESIGN_GATE__ || {};
+  // __PAGE_GATE__ is the current name; __DESIGN_GATE__ is accepted so a page
+  // shell published before the rename keeps working until it is next rebuilt.
+  var CFG = window.__PAGE_GATE__ || window.__DESIGN_GATE__ || {};
   var ENC_PATH = CFG.enc || "content.enc";      // relative to the page's directory
-  var STORAGE_KEY = "designs-code:" + location.pathname;
+  var STORAGE_KEY = "shared-page-code:" + location.pathname;
 
   // ---- helpers ------------------------------------------------------------
   function b64ToBytes(b64) {
@@ -137,7 +139,7 @@
   function buildPrompt() {
     var title = CFG.title || "eSUB";
     var wrap = document.createElement("div");
-    wrap.setAttribute("data-design-gate", "");
+    wrap.setAttribute("data-page-gate", "");
     wrap.innerHTML =
       '<style>' +
       // --brand is the logo yellow (a FILL colour); --brand-text is the readable
@@ -147,34 +149,34 @@
       ':root{--brand:#f6d972;--brand-hover:#efcd55;--brand-active:#e0bb3c;--brand-text:#8a6400;--err:#d32f2f;' +
       '--muted:#5a626a;--border:#d7d7d7;--bg-soft:#f5f6f7;--card:#fff;--text:#323a42;--heading:#0a121a}' +
       '@media (prefers-color-scheme:dark){:root{--bg-soft:#10191f;--card:#323a42;--text:#d7d7d7;--heading:#fff;--muted:#9aa4ad;--border:#3d4650;--brand-text:#f6d972;--err:#ff7a7a}}' +
-      '[data-design-gate]{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:1.5rem;' +
+      '[data-page-gate]{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:1.5rem;' +
       'font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg-soft);' +
       'color:var(--text);-webkit-font-smoothing:antialiased;z-index:2147483647}' +
-      '[data-design-gate] *,[data-design-gate] *::before,[data-design-gate] *::after{box-sizing:border-box}' +
-      '[data-design-gate] .card{background:var(--card);border:1px solid var(--border);border-top:4px solid var(--brand);' +
+      '[data-page-gate] *,[data-page-gate] *::before,[data-page-gate] *::after{box-sizing:border-box}' +
+      '[data-page-gate] .card{background:var(--card);border:1px solid var(--border);border-top:4px solid var(--brand);' +
       'border-radius:5px;max-width:26rem;width:100%;padding:2.5rem 2.25rem;text-align:center;' +
       'box-shadow:0 1px 3px rgba(10,18,26,.06),0 12px 32px rgba(10,18,26,.08)}' +
-      '[data-design-gate] .brand{font-size:1.4rem;font-weight:800;letter-spacing:-.02em;color:var(--heading);margin:0 0 .25rem}' +
-      '[data-design-gate] .brand span{color:var(--brand-text)}' +
-      '[data-design-gate] .tag{font-size:.72rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:0 0 1.5rem}' +
-      '[data-design-gate] label{display:block;text-align:left;font-size:.85rem;font-weight:600;color:var(--heading);margin:0 0 .4rem}' +
-      '[data-design-gate] input{width:100%;padding:12px 14px;font-size:1rem;font-family:inherit;color:var(--text);background:var(--bg-soft);' +
+      '[data-page-gate] .brand{font-size:1.4rem;font-weight:800;letter-spacing:-.02em;color:var(--heading);margin:0 0 .25rem}' +
+      '[data-page-gate] .brand span{color:var(--brand-text)}' +
+      '[data-page-gate] .tag{font-size:.72rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:0 0 1.5rem}' +
+      '[data-page-gate] label{display:block;text-align:left;font-size:.85rem;font-weight:600;color:var(--heading);margin:0 0 .4rem}' +
+      '[data-page-gate] input{width:100%;padding:12px 14px;font-size:1rem;font-family:inherit;color:var(--text);background:var(--bg-soft);' +
       'border:1px solid var(--border);border-radius:5px;outline:none}' +
-      '[data-design-gate] input:focus{border-color:var(--brand-active);box-shadow:0 0 0 3px rgba(246,217,114,.45)}' +
-      '[data-design-gate] button{margin-top:1rem;width:100%;background:var(--brand);color:#0a121a;font-weight:700;font-size:1rem;' +
+      '[data-page-gate] input:focus{border-color:var(--brand-active);box-shadow:0 0 0 3px rgba(246,217,114,.45)}' +
+      '[data-page-gate] button{margin-top:1rem;width:100%;background:var(--brand);color:#0a121a;font-weight:700;font-size:1rem;' +
       'font-family:inherit;border:0;padding:13px 0;border-radius:5px;cursor:pointer;transition:background-color .15s ease}' +
-      '[data-design-gate] button:hover{background:var(--brand-hover)}' +
-      '[data-design-gate] button:disabled{opacity:.6;cursor:default}' +
-      '[data-design-gate] .err{min-height:1.2rem;margin:.75rem 0 0;font-size:.9rem;color:var(--err);font-weight:600}' +
-      '[data-design-gate].shake .card{animation:dg-shake .4s}' +
+      '[data-page-gate] button:hover{background:var(--brand-hover)}' +
+      '[data-page-gate] button:disabled{opacity:.6;cursor:default}' +
+      '[data-page-gate] .err{min-height:1.2rem;margin:.75rem 0 0;font-size:.9rem;color:var(--err);font-weight:600}' +
+      '[data-page-gate].shake .card{animation:dg-shake .4s}' +
       '@keyframes dg-shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-7px)}40%,80%{transform:translateX(7px)}}' +
       '</style>' +
       '<form class="card" autocomplete="off">' +
-      '<p class="brand">e<span>SUB</span> Designs</p>' +
-      '<p class="tag">Preview access</p>' +
+      '<p class="brand">e<span>SUB</span></p>' +
+      '<p class="tag">Access code required</p>' +
       '<label for="dg-code">Enter your access code</label>' +
       '<input id="dg-code" name="dg-code" type="password" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off" aria-describedby="dg-err">' +
-      '<button type="submit">Unlock preview</button>' +
+      '<button type="submit">Unlock page</button>' +
       '<p class="err" id="dg-err" role="alert"></p>' +
       '</form>';
 
