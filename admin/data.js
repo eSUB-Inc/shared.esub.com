@@ -20,13 +20,33 @@
   }
 
   // ---------------- Real store (GitHub API + PAT) ----------------
-  function RealStore(user) {
+  function RealStore(user, me) {
     var gh = window.GitHubApi;
     var commitMsg = function (verb, slug) {
       // First name lands in the commit message so "published by" survives even
       // when the git author is the PAT owner.
       return verb + " " + slug + " via admin (" + user.firstName + ")";
     };
+    // Standard users (proxy mode) never read or write the raw workbook: the
+    // proxy serves their own rows on /codes and edits one row on /page-meta,
+    // and refuses the raw file. Admins keep the direct workbook path. Until a
+    // proxy that serves those routes is deployed, its "not found" answer falls
+    // back to the direct path, so this SPA can ship before the proxy.
+    var scoped = window.ProxyApi.enabled() && !(me && me.role === "admin");
+    function routeMissing(e) { return !!e && e.status === 404 && e.code === "not found"; }
+    async function readRows() {
+      if (scoped) {
+        try { return await window.ProxyApi.get("/codes"); }
+        catch (e) { if (!routeMissing(e)) throw e; }
+      }
+      return (await readWorkbook()).rows;
+    }
+    // true when the proxy handled it; false when the route does not exist yet.
+    async function pageMeta(slug, op, notes) {
+      if (!scoped) return false;
+      try { await window.ProxyApi.post("/page-meta", { slug: slug, op: op, notes: notes }); return true; }
+      catch (e) { if (routeMissing(e)) return false; throw e; }
+    }
 
     async function readWorkbook() {
       var f = await gh.getFile(G.privateRepo, "access-codes.xlsx");
@@ -45,11 +65,11 @@
     async function loadPages() {
       // One recursive tree call yields every slug AND its html size — no
       // per-folder listings needed.
-      var results = await Promise.all([readWorkbook(), gh.getTree(G.privateRepo)]);
-      var book = results[0];
+      var results = await Promise.all([readRows(), gh.getTree(G.privateRepo)]);
+      var rows = results[0] || [];
       var tree = (results[1] && results[1].tree) || [];
       var byPath = {};
-      book.rows.forEach(function (r) {
+      rows.forEach(function (r) {
         var slug = String(r.public_path || "").replace(/^\/+|\/+$/g, "");
         if (slug) byPath[slug] = r;
       });
@@ -115,6 +135,7 @@
       uploadPage: function (slug, htmlText) { return putHtml(slug, htmlText, "Publish"); },
       updatePage: function (slug, htmlText) { return putHtml(slug, htmlText, "Update"); },
       resetCode: async function (slug) {
+        if (await pageMeta(slug, "reset-code")) return;
         var book = await readWorkbook();
         if (!book.wb) throw new Error("access-codes.xlsx not found");
         // Blank plaintext_code + encoded_code on the matching row; the pipeline
@@ -139,6 +160,7 @@
         await writeWorkbook(book, commitMsg("Reset code for", slug), { kind: "reset-code", slug: slug });
       },
       saveNotes: async function (slug, notes) {
+        if (await pageMeta(slug, "edit-notes", notes)) return;
         var book = await readWorkbook();
         if (!book.wb) throw new Error("access-codes.xlsx not found");
         var ws = book.wb.Sheets[book.sheetName];
@@ -197,6 +219,6 @@
   // on in the internal handoff bundle's git history if ever needed for UX review.
   window.AdminData = {
     slugify: slugify,
-    makeStore: function (user) { return RealStore(user); },
+    makeStore: function (user, me) { return RealStore(user, me); },
   };
 })();

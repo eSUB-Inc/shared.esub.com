@@ -1108,7 +1108,7 @@
               }
               setMe(profile);
               if (profile.disabled) { setPhase("disabled"); return; }
-              setStore(window.AdminData.makeStore(acct));
+              setStore(window.AdminData.makeStore(acct, profile));
               setPhase("app");
               return;
             }
